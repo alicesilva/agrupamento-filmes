@@ -1,5 +1,5 @@
 ---
-title: "Tipos de filme de FULANO(A)"
+title: "Tipos de filme de Julia Roberts"
 output:
     html_document:
     df_print: paged
@@ -12,6 +12,8 @@ library(here)
 library(cluster)
 library(plotly)
 library(ggdendro)
+library(broom)
+library(ggpubr)
 
 source(here::here("code/lib.R"))
 theme_set(theme_report())
@@ -28,10 +30,12 @@ paleta = c("#404E4D",
            "#F4743B")
 ```
 
+Neste relatório, iremos explorar os dados da atriz Julia Roberts. Os dados foram extraídos do [RottenTomatoes](https://www.rottentomatoes.com/).
+
 ```{r}
 ## ANTES DE USAR
 # Para criar data/movies.csv
-import_data("scarlett_johansson") # ou com o ator/atriz que você escolher
+import_data("julia_roberts") # ou com o ator/atriz que você escolher
 ```
 
 
@@ -41,90 +45,101 @@ filmes = read_imported_data()
 
 ## Descrição
 
-```{r}
-filmes %>% 
-    ggplot(aes(x = ano, y = bilheteria)) + 
-    geom_point(size = 4, color = paleta[1]) 
+O objetivo aqui, é fazer um agrupamento dos filmes da atriz levando em consideração duas variáveis: bilheteria e avaliação.
+</br>
+Primeiro, vamos analisar separadamente cada uma dessas variáveis, utilizaremos também o ano de lançamento de cada filme para observar a variação durante o tempo.
+
+```{r, warning=FALSE}
+p = filmes %>% 
+    ggplot(aes(size = 3, x = ano, 
+               y = bilheteria, 
+               text = paste("Filme:",filme,
+                            "\nBilheteria:",
+                            bilheteria,"m",
+                            "\nAvaliação:", avaliacao,
+                            "\nAno:",ano))) +
+    geom_point(color = paleta[1]) +
+    labs(title = "Variação da bilheteria ao longo dos anos", y = "Bilheteria", x = "Ano de lançamento")
+ggplotly(p, tooltip = "text")
 ```
-
-
-
-```{r}
-filmes %>% 
-    ggplot(aes(x = bilheteria)) + 
-    geom_histogram(binwidth = 15, fill = paleta[2], color = "black") + 
-    geom_rug(size = .5) 
-```
-
-```{r}
-filmes %>% 
-    ggplot(aes(x = avaliacao)) + 
-    geom_histogram(binwidth = 10, boundary = 0, fill = paleta[3], color = "black") + 
-    geom_rug(size = .5) 
-```
-
-## Estrutura de grupos?
 
 ```{r}
 p = filmes %>% 
-    ggplot(aes(x = "", y = bilheteria, label = filme)) + 
-    geom_jitter(width = .05, alpha = .3, size = 3) + 
-    labs(x = "")
+    ggplot(aes(size = 3, x = ano, 
+               y = avaliacao, 
+               text = paste("Filme:",filme,
+                            "\nBilheteria:",
+                            bilheteria,"m",
+                            "\nAvaliação:", avaliacao,
+                            "\nAno:",ano))) +
+    geom_point(color = paleta[5]) +
+    labs(title = "Variação da avaliação ao longo dos anos", y = "Avaliação", x = "Ano de lançamento")
+ggplotly(p, tooltip = "text")
+```
 
+```{r}
+p = filmes %>% 
+    ggplot(aes(x = "", y = bilheteria, text = paste("Filme:",filme,
+                            "\nBilheteria:",
+                            bilheteria,"m"))) + 
+    geom_jitter(width = .05, alpha = .3, size = 3) + 
+    labs(x = "", y="Bilheteria")
+ggplotly(p, tooltip="text")
+```
+```{r}
+m_transformado = filmes %>% 
+    mutate(b = log10(bilheteria))
+summary(m_transformado %>% select(bilheteria, b))
+```
+
+```{r}
+n_clusters = 4
+km = m_transformado %>% 
+    select(b, avaliacao) %>% 
+    kmeans(centers = n_clusters, nstart = 20)
+agrupado = km %>% 
+    augment(m_transformado)
+m_transformado = filmes %>% 
+    mutate(bilh_scaled = as.vector(scale(log10(bilheteria))), 
+           av_scaled = as.vector(scale(avaliacao))) 
+agrupa_bilh_avaliacao<- function(df, k){
+    df %>% 
+        select(bilh_scaled, av_scaled) %>%
+        kmeans(centers = k, 
+               nstart = 20) %>% 
+        augment(df) %>% 
+        mutate(.cluster = as.character(.cluster))
+}
+agrupamentos = tibble(k = 1:6) %>% 
+    mutate(agrupamento = map(k, ~ agrupa_bilh_avaliacao(m_transformado, .))) %>% 
+    unnest(agrupamento)
+ 
+agrupamentos %>%
+    ggplot(aes(
+        x = avaliacao,
+        y = bilheteria,
+        label = filme,
+        colour = .cluster
+    )) +
+    geom_point(size = 2, alpha = .8) +
+    facet_wrap( ~ k) +
+    scale_y_log10()
+    
+```
+
+
+
+```{r}
+p = agrupado %>%
+    ggplot(aes(x = avaliacao, y = bilheteria, color = .cluster, label = filme))  +
+    geom_point(size = 2) +
+    scale_y_log10() 
 ggplotly(p)
 ```
 
-## Agrupamento hierárquico
 
-```{r}
-agrupamento_h = filmes %>% 
-    mutate(nome = paste0(filme, 
-                         " (av=", 
-                         avaliacao, 
-                         ")")) %>% 
-    as.data.frame() %>% 
-    column_to_rownames("filme") %>% 
-    select(avaliacao) %>%
-    dist(method = "euclidian") %>% 
-    hclust(method = "complete")
 
-ggdendrogram(agrupamento_h, rotate = T, size = 2, theme_dendro = F) + 
-    labs(y = "Dissimilaridade", x = "", title = "Dendrograma")
-```
 
-```{r}
-get_grupos <- function(agrupamento, num_grupos){
-    agrupamento %>% 
-        cutree(num_grupos) %>% 
-        as.data.frame() %>% 
-        mutate(label = rownames(.)) %>% 
-        gather(key =  "k", value = "grupo", -label) %>% 
-        mutate(grupo = as.character(grupo))
-}
 
-atribuicoes = get_grupos(agrupamento_h, num_grupos = 1:6)
 
-atribuicoes = atribuicoes %>% 
-    left_join(filmes, by = c("label" = "filme"))
-
-atribuicoes %>% 
-    ggplot(aes(x = "Filmes", y = avaliacao, colour = grupo)) + 
-    geom_jitter(width = .02, height = 0, size = 1.6, alpha = .6) + 
-    facet_wrap(~ paste(k, " grupos")) + 
-    scale_color_brewer(palette = "Dark2")
-
-```
-
-```{r}
-k_escolhido = 3
-
-atribuicoes %>% 
-    filter(k == k_escolhido) %>% 
-    ggplot(aes(x = reorder(label, avaliacao), y = avaliacao, colour = grupo)) + 
-    geom_jitter(width = .02, height = 0, size = 3, alpha = .6) + 
-    facet_wrap(~ paste(k, " grupos")) + 
-    scale_color_brewer(palette = "Dark2") + 
-    labs(x = "", y = "Avaliação RT") + 
-    coord_flip() 
-```
 
