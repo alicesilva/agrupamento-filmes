@@ -1,8 +1,14 @@
 ---
 title: "Tipos de filme de Julia Roberts"
+author: "Alice Fernandes Silva"
 output:
     html_document:
-    df_print: paged
+        df_print: paged
+        toc: yes
+        toc_float: yes
+    html_notebook:
+        toc: yes
+        toc_float: yes
 theme: sandstone
 ---
 
@@ -32,6 +38,8 @@ paleta = c("#404E4D",
 
 Neste relatório, iremos explorar os dados da atriz Julia Roberts. Os dados foram extraídos do [RottenTomatoes](https://www.rottentomatoes.com/).
 
+Julia Fiona Roberts (Smyrna, 28 de outubro de 1967) é uma atriz e produtora norte-americana, vencedora do Oscar de Melhor Atriz por seu papel em Erin Brockovich, também atuou em Pretty Woman pelo qual se tornou conhecida em Hollywood.
+
 ```{r}
 ## ANTES DE USAR
 # Para criar data/movies.csv
@@ -43,11 +51,12 @@ import_data("julia_roberts") # ou com o ator/atriz que você escolher
 filmes = read_imported_data()
 ```
 
-## Descrição
 
 O objetivo aqui, é fazer um agrupamento dos filmes da atriz levando em consideração duas variáveis: bilheteria e avaliação.
 </br>
 Primeiro, vamos analisar separadamente cada uma dessas variáveis, utilizaremos também o ano de lançamento de cada filme para observar a variação durante o tempo.
+
+##Bilheteria
 
 ```{r, warning=FALSE}
 p = filmes %>% 
@@ -63,6 +72,21 @@ p = filmes %>%
 ggplotly(p, tooltip = "text")
 ```
 
+Há uma variação no faturamento dos filmes em que Julia Roberts atuou, o que mais se destacou nesse aspecto foi *Ocean's Eleven* com bilheteria de 183.4 m. Não é possível perceber uma associação entre bilheteria e o ano, pois em alguns anos a bilheteria cai em comparação ao anterior, e logo após, no ano seguinte, o faturamente cresce.
+
+```{r}
+p = filmes %>% 
+    ggplot(aes(x = "", y = bilheteria, text = paste("Filme:",filme,
+                            "\nBilheteria:",
+                            bilheteria,"m"))) + 
+    geom_jitter(width = .05, alpha = .4, size = 3, color = paleta[5]) + 
+    labs(x = "", y="Bilheteria")
+ggplotly(p, tooltip="text")
+```
+
+Observando esse gráfico é mais fácil verificar em quais grupos os filmes se encaixariam. Há diferentes abordagens que poderíamos tomar, acredito que separar os filmes nos seguintes grupos: bilheteria abaixo de 50, de 50 à 100, de 100 à 150 e acima de 150 (apenas o filme *Ocean's Eleven*), seria uma boa abordagem. 
+
+##Avaliação
 ```{r}
 p = filmes %>% 
     ggplot(aes(size = 3, x = ano, 
@@ -72,74 +96,97 @@ p = filmes %>%
                             bilheteria,"m",
                             "\nAvaliação:", avaliacao,
                             "\nAno:",ano))) +
-    geom_point(color = paleta[5]) +
+    geom_point(color = paleta[1]) +
     labs(title = "Variação da avaliação ao longo dos anos", y = "Avaliação", x = "Ano de lançamento")
 ggplotly(p, tooltip = "text")
 ```
 
+Entre 2003 e 2006 a avaliação dos filmes crescreu consideravelmente, porém, a partir de 2009, os filmes não tiveram boa avaliação, em comparação aos anos anteriores, mas, logo em 2011, os filmes lançados voltaram a serem bem avaliados. Não existe nenhum padrão, a variação da avaliação é muito alta ao longo dos anos.
+
 ```{r}
 p = filmes %>% 
-    ggplot(aes(x = "", y = bilheteria, text = paste("Filme:",filme,
-                            "\nBilheteria:",
-                            bilheteria,"m"))) + 
-    geom_jitter(width = .05, alpha = .3, size = 3) + 
+    ggplot(aes(x = "", y = avaliacao, text = paste("Filme:",filme,
+                            "\nAvaliação:",
+                            avaliacao,"m"))) + 
+    geom_jitter(width = .05, alpha = .4, size = 3, color = paleta[5]) + 
     labs(x = "", y="Bilheteria")
 ggplotly(p, tooltip="text")
 ```
-```{r}
-m_transformado = filmes %>% 
-    mutate(b = log10(bilheteria))
-summary(m_transformado %>% select(bilheteria, b))
-```
+
+De acordo com o gráfico acima, ainda assim, não fica muito clara a definição dos grupos, mas poderíamos separar em: filmes com avaliação abaixo de 40 e acima de 40.
+
+##Agrupamento
+
+Agora utilizando as duas variáveis disponíveis, `avaliação` e `bilheteria`, vamos observar como os filmes se dividem melhor, em quantos grupos. 
+
+###Normalização das variávies
+
+Para tentar agrupar os filmes em grupos, é importante perceber que as escalas de bilheteria e avaliação são bem diferentes.
+Então, abaixo é feito a normalização das variáveis.
 
 ```{r}
-n_clusters = 4
-km = m_transformado %>% 
-    select(b, avaliacao) %>% 
-    kmeans(centers = n_clusters, nstart = 20)
-agrupado = km %>% 
-    augment(m_transformado)
 m_transformado = filmes %>% 
-    mutate(bilh_scaled = as.vector(scale(log10(bilheteria))), 
-           av_scaled = as.vector(scale(avaliacao))) 
-agrupa_bilh_avaliacao<- function(df, k){
-    df %>% 
-        select(bilh_scaled, av_scaled) %>%
-        kmeans(centers = k, 
-               nstart = 20) %>% 
-        augment(df) %>% 
-        mutate(.cluster = as.character(.cluster))
+    mutate(bilheteria_log = as.vector(scale(log10(bilheteria))), 
+           avaliacao_scaled = as.vector(scale(avaliacao)))
+
+summary(m_transformado %>% select(bilheteria_log, avaliacao_scaled))
+```
+
+###Escolhendo o K
+
+É utilizado o “Gap Static Calculation” para escolher o melhor valor para o k.
+
+```{r}
+plot_clusgap = function(clusgap, title = "Gap Statistic calculation results") {
+    require("ggplot2")
+    gstab = data.frame(clusgap$Tab, k = 1:nrow(clusgap$Tab))
+    p = ggplot(gstab, aes(k, gap)) + geom_line() + geom_point(size = 5)
+    p = p + geom_errorbar(aes(ymax = gap + SE.sim, ymin = gap - SE.sim), width = .2)
+    p = p + ggtitle(title)
+    return(p)
 }
-agrupamentos = tibble(k = 1:6) %>% 
-    mutate(agrupamento = map(k, ~ agrupa_bilh_avaliacao(m_transformado, .))) %>% 
-    unnest(agrupamento)
- 
-agrupamentos %>%
-    ggplot(aes(
-        x = avaliacao,
-        y = bilheteria,
-        label = filme,
-        colour = .cluster
-    )) +
-    geom_point(size = 2, alpha = .8) +
-    facet_wrap( ~ k) +
-    scale_y_log10()
-    
 ```
-
-
 
 ```{r}
-p = agrupado %>%
-    ggplot(aes(x = avaliacao, y = bilheteria, color = .cluster, label = filme))  +
-    geom_point(size = 2) +
-    scale_y_log10() 
-ggplotly(p)
+gaps <- m_transformado %>% 
+    select(bilheteria_log, avaliacao) %>% 
+    clusGap(FUN = kmeans, nstart = 20, K.max = 8, B = 200)
+plot_clusgap(gaps)
+```
+
+###Agrupamento K-means
+
+Com a execução do Gap Statics é possível perceber que o melhor valor para o K é 5. Logo, assumindo assim esse valor, executamos o algoritmo do k-means.
+
+```{r}
+set.seed(12345)
+n_clusters = 5
+cluster = m_transformado %>% 
+    select(bilheteria_log, avaliacao_scaled) %>% 
+    kmeans(centers = n_clusters, nstart = 20)
+agrupado = cluster %>% 
+    augment(m_transformado)
+p1 = agrupado %>% 
+    ggplot(aes(x = avaliacao, y = bilheteria, color = .cluster, label=filme))  + 
+    geom_point(size = 3)+
+    scale_y_log10()
+ggscatter(agrupado, x="avaliacao", y="bilheteria", color=".cluster")+
+    stat_chull(aes(fill = .cluster), alpha=0.3, geom="polygon")+
+    xlab("Avaliação")+
+    ylab("Bilheteria")
+ggplotly(p1)
 ```
 
 
 
+Podemos perceber a presença de 5 grupos de filmes da atriz Julia Roberts, vamos chama-lós de:
 
+* Bem avaliados e bem faturados: Grupo em cor vermelho, número 1. Aqui neste grupo temos os filmes com as melhores avaliações e também as maiores bilheterias. São filmes de muito sucesso que são caracterizados pelo drama e ação.
 
+* Comédia Romântica Fracassadas: Grupo em cor mostarda, número 2. Os filmes neste grupo são todos do gênero comédia romântica. Eles não são bem sucedidos, pois um deles possui a pior avaliação em comparação com os demais, além disso a bilheteria foi muito baixa.
 
+* Romance: Grupo em verde, número 3. Os filmes neste grupo são caracterizados pelo romance. Possuem bilheteria entre 50 e 120. Não foram muito bem avaliados.
 
+* Comédia e Drama: Grupo em azul, número 4. Os filmes deste grupo tiveram avaliação bem parecidas entre 60 e 70, e bilheteria muito baixa, menor que 50. Não foram bem vendidos, mas são ótimos filmes.
+
+* Avaliados na média: Grupo em rosa, número 5. Aqui neste grupo os filmes tiveram avaliação na média, acredito que agradaram a metade do público e a outra metade não.
